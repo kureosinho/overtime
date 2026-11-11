@@ -1,0 +1,7 @@
+*.exe
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+android/local.properties
+.DS_Store

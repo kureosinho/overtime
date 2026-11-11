@@ -1,0 +1,61 @@
+name: Build Overtime
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Moteur Android (arm64)
+        working-directory: app
+        run: CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../android/app/src/main/jniLibs/arm64-v8a/libovertime.so .
+
+      - name: Version Windows (.exe)
+        working-directory: app
+        run: GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -H windowsgui" -o ../Overtime.exe .
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: APK Android
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+
+      - name: Renommer
+        run: cp android/app/build/outputs/apk/release/app-release.apk Overtime.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: overtime-${{ github.run_number }}
+          path: |
+            Overtime.apk
+            Overtime.exe
+
+      - name: Publier la version
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.5.${{ github.run_number }}
+          name: Overtime 2.5.${{ github.run_number }}
+          body: "Overtime.apk : version téléphone Android (matchs pros). Overtime.exe : version PC."
+          files: |
+            Overtime.apk
+            Overtime.exe

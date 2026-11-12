@@ -20,7 +20,7 @@ import (
 //go:embed web
 var webFS embed.FS
 
-const appVersion = "2.5.0"
+const appVersion = "2.6.0"
 
 var mobileMode bool
 

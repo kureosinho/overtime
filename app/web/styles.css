@@ -443,3 +443,13 @@ body.mobile .status { display: flex; }
   .game .score { font-size: 20px; }
   .toast { left: 12px; right: 12px; top: auto; max-width: none; bottom: calc(96px + env(safe-area-inset-bottom)); transform: none; }
 }
+
+/* Classements par stat */
+.toolbar.statbar { margin-top: 10px; }
+.statbar .chips { flex-wrap: wrap; }
+table.stat-t th.on { color: var(--ink, #eef0ff); }
+table.stat-t td.on { font-family: "Unbounded", sans-serif; font-weight: 700; color: #ffb34a; }
+table.stat-t tr.top1 td:first-child { color: #ffd24a; font-weight: 800; }
+table.stat-t tr.top2 td:first-child { color: #d9dcf5; font-weight: 800; }
+table.stat-t tr.top3 td:first-child { color: #e0a272; font-weight: 800; }
+@media (max-width: 760px) { .statbar .chips { flex-wrap: nowrap; max-width: 100%; min-width: 0; } .toolbar > * { max-width: 100%; min-width: 0; margin-left: 0 !important; } }

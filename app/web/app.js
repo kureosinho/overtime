@@ -1210,42 +1210,124 @@ function renderProTab(id, series, games) {
     const days = Object.entries(byDay).sort((a, b) => Math.min(...b[1].map((x) => x.date)) - Math.min(...a[1].map((x) => x.date)));
     el.innerHTML = days.map(([day, ss]) => `<section class="session"><div class="session-head"><h3>${esc(day)}</h3><span class="muted">${ss[0].date !== Infinity ? fmtDateLong(Math.min(...ss.map((x) => x.date))) : ""}</span></div>
       <div class="series-grid">${ss.sort((a, b) => a.date - b.date).map(seriesCard).join("")}</div></section>`).join("");
-  } else if (proTab === "players") {
+  } else {
+    // ----- filtre par jour (commun joueurs / équipes) -----
     if (proDay.tour !== id) proDay = { tour: id, day: "all", cumul: false };
     const dayFirst = {};
     for (const s of series) { const k = s.parent || "Matchs"; dayFirst[k] = Math.min(dayFirst[k] ?? Infinity, s.date); }
     const dayList = Object.keys(dayFirst).sort((a, b) => dayFirst[a] - dayFirst[b]);
     if (proDay.day !== "all" && !dayList.includes(proDay.day)) proDay.day = "all";
-    const inDay = (g) => {
-      if (proDay.day === "all") return true;
-      const k = g.series?.parent || "Matchs";
-      return proDay.cumul ? (dayFirst[k] ?? Infinity) <= dayFirst[proDay.day] : k === proDay.day;
-    };
-    const ps = [...S.proPlayers.values()].filter((p) => p.games.some(({ g }) => g.pm.tournament === id && inDay(g))).map((p) => {
-      const gs = p.games.filter(({ g, p: x }) => g.pm.tournament === id && x.a && inDay(g));
-      const av = (f) => avgOf(gs, ({ p: x }) => f(x.a));
-      return { p, n: gs.length, r: avgOf(gs, ({ p: x }) => x.r), g: av((a) => a.core.goals), as: av((a) => a.core.assists), sv: av((a) => a.core.saves), sh: av((a) => a.core.shots), dm: av((a) => a.core.demosInflicted), bpm: av((a) => a.boost.bpm), sp: av((a) => a.movement.avgSpeed) };
-    }).filter((x) => x.n).sort((a, b) => (b.r ?? -1) - (a.r ?? -1));
-    const filt = `<div class="toolbar"><div class="chips">${[["all", "Tout le tournoi"], ...dayList.map((d) => [d, d])].map(([v, l]) => `<button class="chip ${proDay.day === v ? "on" : ""}" data-day="${esc(v)}">${esc(l)}</button>`).join("")}</div>
-      ${dayList.length > 1 ? `<div class="chips" style="margin-left:auto">${[[false, "Ce jour seul"], [true, "Cumulé jusqu'à ce jour"]].map(([v, l]) => `<button class="chip ${proDay.cumul === v ? "on" : ""}" data-cumul="${v}" ${proDay.day === "all" ? "disabled" : ""}>${l}</button>`).join("")}</div>` : ""}</div>`;
-    el.innerHTML = filt + (ps.length ? `<div class="glass flush tablewrap"><table class="t"><thead><tr><th>#</th><th style="text-align:left">Joueur</th><th>Games</th><th>Rating 3.0</th><th class="hm">Buts</th><th class="hm">Passes</th><th class="hm">Arrêts</th><th class="hm">Tirs</th><th class="hm">Démos</th><th class="hm">BPM</th><th class="hm">Vitesse</th></tr></thead><tbody>
-      ${ps.map((x, i) => `<tr><td>${i + 1}</td><td style="text-align:left"><a href="#/pro/j/${encodeURIComponent(x.p.id)}"><b>${esc(x.p.name)}</b></a> <span class="muted">${esc(x.p.teamKey || "")}</span></td><td>${x.n}</td><td class="r3cell ${ratingTier(x.r).cls}">${r2(x.r)}</td><td class="hm">${nf(x.g, 2)}</td><td class="hm">${nf(x.as, 2)}</td><td class="hm">${nf(x.sv, 2)}</td><td class="hm">${nf(x.sh, 2)}</td><td class="hm">${nf(x.dm, 2)}</td><td class="hm">${nf(x.bpm, 0)}</td><td class="hm">${kmh(x.sp)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="legend">${proDay.day === "all" ? "Tout le tournoi" : proDay.cumul ? `Cumulé jusqu'à ${esc(proDay.day)} inclus` : esc(proDay.day)} · moyennes par game. Le Rating 3.0 des pros est calculé par rapport aux autres joueurs pros suivis dans Overtime (1,00 = un pro moyen).</p>` : `<div class="empty">${proDay.day === "all" ? "Le classement apparaît dès que les replays sont analysés." : "Aucune game analysée pour cette sélection."}</div>`);
-    $$("[data-day]", el).forEach((b) => (b.onclick = () => { proDay.day = b.dataset.day; renderProTab(id, series, games); }));
-    $$("[data-cumul]", el).forEach((b) => (b.onclick = () => { proDay.cumul = b.dataset.cumul === "true"; renderProTab(id, series, games); }));
-  } else {
-    const teams = {};
-    for (const s of series) for (let i = 0; i < 2; i++) {
-      const k = s.teams[i]; const t = (teams[k] ||= { k, sw: 0, sl: 0, gw: 0, gl: 0, players: new Set() });
-      t.gw += s.score[i]; t.gl += s.score[1 - i];
-      if (s.score[i] !== s.score[1 - i]) s.score[i] > s.score[1 - i] ? t.sw++ : t.sl++;
+    const inDayKey = (k) => proDay.day === "all" || (proDay.cumul ? (dayFirst[k] ?? Infinity) <= dayFirst[proDay.day] : k === proDay.day);
+    const inDay = (g) => inDayKey(g.series?.parent || "Matchs");
+    const isTeams = proTab === "teams";
+    const views = isTeams ? [["bilan", "Bilan"], ...PRO_STATS.filter((x) => x.team !== false).map((x) => [x.k, x.label])] : [["general", "Général"], ...PRO_STATS.map((x) => [x.k, x.label])];
+    const vkey = isTeams ? "teamView" : "playerView";
+    if (!views.some(([k]) => k === proDay[vkey])) proDay[vkey] = views[0][0];
+    const stat = PRO_STATS.find((x) => x.k === proDay[vkey]);
+    const mode = stat?.kind === "avg" ? "avg" : proDay.mode || "total";
+    const chipRow = (items, attr, cur) => `<div class="chips">${items.map(([v, l, dis]) => `<button class="chip ${cur === v ? "on" : ""}" data-${attr}="${esc(String(v))}" ${dis ? "disabled" : ""}>${esc(l)}</button>`).join("")}</div>`;
+    let filt = `<div class="toolbar">${chipRow([["all", "Tout le tournoi"], ...dayList.map((d) => [d, d])], "day", proDay.day)}
+      ${dayList.length > 1 ? `<div style="margin-left:auto">${chipRow([[false, "Ce jour seul", proDay.day === "all"], [true, "Cumulé jusqu'à ce jour", proDay.day === "all"]], "cumul", proDay.cumul)}</div>` : ""}</div>
+      <div class="toolbar statbar">${chipRow(views, "view", proDay[vkey])}
+      ${stat ? `<div style="margin-left:auto">${chipRow([["total", "Total", stat.kind === "avg"], ["pg", "Par game", stat.kind === "avg"]], "mode", stat.kind === "avg" ? "" : mode)}</div>` : ""}</div>`;
+    const period = proDay.day === "all" ? "Tout le tournoi" : proDay.cumul ? `Cumulé jusqu'à ${esc(proDay.day)} inclus` : esc(proDay.day);
+    let body = "";
+    // lignes de stats (joueurs ou équipes)
+    const accumulate = (entries) => entries.map((e) => {
+      const o = { ...e, n: e.gs.length, r: avgOf(e.gs, (x) => x.r) };
+      for (const st of PRO_STATS) {
+        if (st.k === "r") continue;
+        if (st.kind === "avg") o[st.k] = avgOf(e.gs.filter((x) => x.a), (x) => st.get(x.a));
+        else { const tot = e.gs.reduce((t, x) => t + (x.a ? st.get(x.a) || 0 : 0), 0); o[st.k] = tot; o[st.k + "_pg"] = e.gsA ? tot / e.gsA : null; }
+      }
+      return o;
+    });
+    if (!isTeams) {
+      const ps = accumulate([...S.proPlayers.values()].map((p) => {
+        const gs = p.games.filter(({ g, p: x }) => g.pm.tournament === id && x.a && inDay(g)).map(({ p: x }) => x);
+        return { p, gs, gsA: gs.length };
+      }).filter((x) => x.gs.length));
+      const pname = (x) => `<a href="#/pro/j/${encodeURIComponent(x.p.id)}"><b>${esc(x.p.name)}</b></a> <span class="muted">${esc(x.p.teamKey || "")}</span>`;
+      if (!stat) {
+        ps.sort((a, b) => (b.r ?? -1) - (a.r ?? -1));
+        body = ps.length ? `<div class="glass flush tablewrap"><table class="t"><thead><tr><th>#</th><th style="text-align:left">Joueur</th><th>Games</th><th>Rating 3.0</th><th class="hm">Buts</th><th class="hm">Passes</th><th class="hm">Arrêts</th><th class="hm">Tirs</th><th class="hm">Démos</th><th class="hm">BPM</th><th class="hm">Vitesse</th></tr></thead><tbody>
+          ${ps.map((x, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${pname(x)}</td><td>${x.n}</td><td class="r3cell ${ratingTier(x.r).cls}">${r2(x.r)}</td><td class="hm">${nf(x.goals_pg, 2)}</td><td class="hm">${nf(x.assists_pg, 2)}</td><td class="hm">${nf(x.saves_pg, 2)}</td><td class="hm">${nf(x.shots_pg, 2)}</td><td class="hm">${nf(x.demos_pg, 2)}</td><td class="hm">${nf(x.bpm, 0)}</td><td class="hm">${kmh(x.speed)}</td></tr>`).join("")}</tbody></table></div>
+          <p class="legend">${period} · moyennes par game. Le Rating 3.0 des pros est calculé par rapport aux autres joueurs pros suivis dans Overtime (1,00 = un pro moyen).</p>` : "";
+      } else body = statTable(ps, stat, mode, pname, "Joueur", period);
+    } else {
+      // équipes : bilan des séries + stats cumulées de leurs joueurs
+      const teams = {};
+      const T = (k) => (teams[k] ||= { k, sw: 0, sl: 0, gw: 0, gl: 0, players: new Set(), gs: [], games: new Set() });
+      for (const s of series) {
+        if (!inDayKey(s.parent || "Matchs")) continue;
+        for (let i = 0; i < 2; i++) {
+          const t = T(s.teams[i]);
+          t.gw += s.score[i]; t.gl += s.score[1 - i];
+          if (s.score[i] !== s.score[1 - i]) s.score[i] > s.score[1 - i] ? t.sw++ : t.sl++;
+        }
+      }
+      for (const p of S.proPlayers.values()) for (const { g, p: x } of p.games) {
+        if (g.pm.tournament !== id || !inDay(g)) continue;
+        const k = g.teamKeys?.[x.team]; if (!k) continue;
+        const t = T(k); t.players.add(p);
+        if (x.a) { t.gs.push(x); t.games.add(g.guid); }
+      }
+      const rowsT = accumulate(Object.values(teams).map((t) => ({ ...t, gsA: t.games.size })));
+      for (const t of rowsT) { t.n = t.games.size; t.r = avgOf(t.gs, (x) => x.r); }
+      const tname = (t) => `<b>${esc(teamFull(t.k))}</b> <span class="muted">${esc(t.k)}</span>`;
+      if (!stat) {
+        const rows = rowsT.filter((t) => t.sw + t.sl + t.gw + t.gl > 0).sort((a, b) => b.sw - a.sw || (b.gw - b.gl) - (a.gw - a.gl));
+        body = rows.length ? `<div class="glass flush tablewrap"><table class="t"><thead><tr><th style="text-align:left">Équipe</th><th>Séries</th><th>Games</th><th>Diff.</th><th class="hm">Rating moyen</th><th class="hm" style="text-align:left">Joueurs</th></tr></thead><tbody>
+          ${rows.map((t) => `<tr><td style="text-align:left">${tname(t)}</td><td>${t.sw} V – ${t.sl} D</td><td>${t.gw} – ${t.gl}</td><td class="${t.gw - t.gl >= 0 ? "up" : "down"}">${t.gw - t.gl >= 0 ? "+" : ""}${t.gw - t.gl}</td><td class="hm r3cell ${ratingTier(t.r).cls}">${r2(t.r)}</td><td class="hm" style="text-align:left">${[...t.players].map((p) => `<a href="#/pro/j/${encodeURIComponent(p.id)}">${esc(p.name)}</a>`).join(", ")}</td></tr>`).join("")}</tbody></table></div>
+          <p class="legend">${period} · bilan calculé à partir des séries publiées sur Ballchasing.</p>` : "";
+      } else body = statTable(rowsT.filter((t) => t.n), stat, mode, tname, "Équipe", period, true);
     }
-    for (const p of S.proPlayers.values()) if (p.teamKey && teams[p.teamKey] && p.games.some(({ g }) => g.pm.tournament === id)) teams[p.teamKey].players.add(p);
-    const rows = Object.values(teams).sort((a, b) => b.sw - a.sw || (b.gw - b.gl) - (a.gw - a.gl));
-    el.innerHTML = `<div class="glass flush tablewrap"><table class="t"><thead><tr><th style="text-align:left">Équipe</th><th>Séries</th><th>Games</th><th>Diff.</th><th style="text-align:left">Joueurs</th></tr></thead><tbody>
-      ${rows.map((t) => `<tr><td style="text-align:left"><b>${esc(teamFull(t.k))}</b> <span class="muted">${esc(t.k)}</span></td><td>${t.sw} V – ${t.sl} D</td><td>${t.gw} – ${t.gl}</td><td class="${t.gw - t.gl >= 0 ? "up" : "down"}">${t.gw - t.gl >= 0 ? "+" : ""}${t.gw - t.gl}</td><td style="text-align:left">${[...t.players].map((p) => `<a href="#/pro/j/${encodeURIComponent(p.id)}">${esc(p.name)}</a>`).join(", ")}</td></tr>`).join("")}</tbody></table></div>
-      <p class="legend">Bilan calculé à partir des séries publiées sur Ballchasing.</p>`;
+    el.innerHTML = filt + (body || `<div class="empty">${proDay.day === "all" ? "Le classement apparaît dès que les replays sont analysés." : "Aucune game analysée pour cette sélection."}</div>`);
+    const rer = () => renderProTab(id, series, games);
+    $$("[data-day]", el).forEach((b) => (b.onclick = () => { proDay.day = b.dataset.day; rer(); }));
+    $$("[data-cumul]", el).forEach((b) => (b.onclick = () => { proDay.cumul = b.dataset.cumul === "true"; rer(); }));
+    $$("[data-view]", el).forEach((b) => (b.onclick = () => { proDay[vkey] = b.dataset.view; rer(); }));
+    $$("[data-mode]", el).forEach((b) => (b.onclick = () => { proDay.mode = b.dataset.mode; rer(); }));
   }
+}
+
+// Stats disponibles dans les classements pros. kind "sum" : total + par game ; "avg" : moyenne par game.
+const PRO_STATS = [
+  { k: "r", label: "Rating 3.0", kind: "avg", fmt: (v) => r2(v), rating: true },
+  { k: "goals", label: "Buts", kind: "sum", get: (a) => a.core.goals },
+  { k: "assists", label: "Passes déc.", kind: "sum", get: (a) => a.core.assists },
+  { k: "saves", label: "Arrêts", kind: "sum", get: (a) => a.core.saves },
+  { k: "shots", label: "Tirs", kind: "sum", get: (a) => a.core.shots },
+  { k: "points", label: "Buts + passes", kind: "sum", get: (a) => (a.core.goals || 0) + (a.core.assists || 0) },
+  { k: "xg", label: "xG", kind: "sum", get: (a) => a.core.xg, d: 2 },
+  { k: "score", label: "Score", kind: "sum", get: (a) => a.core.score, d: 0 },
+  { k: "demos", label: "Démos", kind: "sum", get: (a) => a.core.demosInflicted },
+  { k: "demosTaken", label: "Démos subies", kind: "sum", get: (a) => a.core.demosTaken, low: true },
+  { k: "touches", label: "Touches", kind: "sum", get: (a) => a.core.touches, d: 0 },
+  { k: "fifty", label: "Duels gagnés", kind: "sum", get: (a) => a.control?.fiftyWins },
+  { k: "poss", label: "Possession", kind: "sum", get: (a) => a.control?.possessionSec, fmt: (v) => mmss(v), team: true },
+  { k: "bpm", label: "Boost / min", kind: "avg", get: (a) => a.boost.bpm, d: 0 },
+  { k: "speed", label: "Vitesse", kind: "avg", get: (a) => a.movement.avgSpeed, fmt: (v) => kmh(v) },
+  { k: "sonic", label: "% supersonique", kind: "avg", get: (a) => a.movement.pctSupersonic, fmt: (v) => nf(v, 1) + " %" },
+];
+function statTable(rows, st, mode, nameCell, who, period, team = false) {
+  if (!rows.length) return "";
+  const val = (x) => (st.kind === "avg" ? x[st.k] : mode === "pg" ? x[st.k + "_pg"] : x[st.k]);
+  const fmt = (v, pg) => (v == null ? "–" : st.fmt ? st.fmt(v) : nf(v, pg ? 2 : st.d ?? 0));
+  // en "par game", on écarte les joueurs avec trop peu de games pour éviter les classements trompeurs
+  const maxN = Math.max(...rows.map((x) => x.n));
+  const minN = mode === "pg" || st.kind === "avg" ? Math.max(1, Math.ceil(maxN * 0.3)) : 1;
+  const list = rows.filter((x) => x.n >= minN && val(x) != null).sort((a, b) => (st.low ? val(a) - val(b) : val(b) - val(a)));
+  const hidden = rows.length - list.length;
+  const cols = st.kind === "avg"
+    ? `<th class="on">${esc(st.label)}${st.rating ? "" : " (moy.)"}</th>`
+    : `<th class="${mode === "total" ? "on" : ""}">Total</th><th class="${mode === "pg" ? "on" : ""}">Par game</th>`;
+  const cells = (x) => st.kind === "avg"
+    ? `<td class="${st.rating ? "r3cell " + ratingTier(x.r).cls : "on"}">${fmt(x[st.k])}</td>`
+    : `<td class="${mode === "total" ? "on" : ""}">${fmt(x[st.k], false)}</td><td class="${mode === "pg" ? "on" : ""}">${fmt(x[st.k + "_pg"], true)}</td>`;
+  return `<div class="glass flush tablewrap"><table class="t stat-t"><thead><tr><th>#</th><th style="text-align:left">${who}</th><th>Games</th>${cols}</tr></thead><tbody>
+    ${list.map((x, i) => `<tr class="${i < 3 ? "top" + (i + 1) : ""}"><td>${i + 1}</td><td style="text-align:left">${nameCell(x)}</td><td>${x.n}</td>${cells(x)}</tr>`).join("")}</tbody></table></div>
+    <p class="legend">${period} · ${esc(st.label)}${st.kind === "avg" ? " : moyenne par game" : mode === "pg" ? " par game" : " au total"}${team && st.kind === "sum" ? " (somme des 3 joueurs de l'équipe)" : ""}${st.low ? " · moins c'est mieux" : ""}.${hidden && minN > 1 ? ` Classement limité aux ${team ? "équipes" : "joueurs"} avec au moins ${minN} games.` : ""}</p>`;
 }
 function seriesCard(s) {
   const w = s.score[0] === s.score[1] ? -1 : s.score[0] > s.score[1] ? 0 : 1;
